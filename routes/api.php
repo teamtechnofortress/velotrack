@@ -12,6 +12,7 @@ Route::post('/auth/password/reset', [VeloTrackController::class, 'resetPassword'
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/auth/me', [VeloTrackController::class, 'me']);
     Route::post('/auth/logout', [VeloTrackController::class, 'logout']);
+    Route::delete('/auth/account', [VeloTrackController::class, 'deleteAccount'])->middleware('throttle:5,1');
     Route::post('/auth/email/verify', [VeloTrackController::class, 'verifyEmail'])->middleware('throttle:10,1');
     Route::post('/auth/email/resend', [VeloTrackController::class, 'resendVerification'])->middleware('throttle:3,1');
 });

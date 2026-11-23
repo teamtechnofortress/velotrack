@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Models\VeloTrackBackup;
 use App\Services\AuthCodeService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
@@ -79,6 +80,20 @@ class VeloTrackController extends Controller
         if (!$user->hasVerifiedEmail()) $user->markEmailAsVerified(); // they proved inbox access
         $user->tokens()->delete(); // sign out every device
         return response()->json(['message' => 'Password updated. Please sign in.']);
+    }
+    public function deleteAccount(Request $request)
+    {
+        $data = $request->validate(['password' => ['required', 'string']]);
+        $user = $request->user();
+        if (!Hash::check($data['password'], $user->password)) {
+            throw ValidationException::withMessages(['password' => ['Incorrect password.']]);
+        }
+        // Every per-user table cascades on delete; tokens are polymorphic so remove them explicitly.
+        DB::transaction(function () use ($user) {
+            $user->tokens()->delete();
+            $user->delete();
+        });
+        return response()->json(['message' => 'Account deleted']);
     }
     public function logout(Request $request) { $request->user()->currentAccessToken()->delete(); return response()->json(['message' => 'Signed out']); }
     public function upload(Request $request)
