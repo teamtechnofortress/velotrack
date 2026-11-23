@@ -5,12 +5,20 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\VeloTrackBackup;
+use App\Services\AuthCodeService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
 class VeloTrackController extends Controller
 {
+    public function __construct(private AuthCodeService $codes) {}
+
+    private function userPayload(User $user): array
+    {
+        return $user->only('id', 'name', 'email') + ['email_verified' => $user->hasVerifiedEmail()];
+    }
+
     public function register(Request $request)
     {
         $data = $request->validate([
@@ -20,16 +28,58 @@ class VeloTrackController extends Controller
             'device_name' => ['required', 'string', 'max:100'],
         ]);
         $user = User::create(['name' => $data['name'], 'email' => $data['email'], 'password' => Hash::make($data['password'])]);
-        return response()->json(['user' => $user->only('id', 'name', 'email'), 'token' => $user->createToken($data['device_name'])->plainTextToken], 201);
+        $this->codes->send($user, AuthCodeService::VERIFY);
+        return response()->json(['user' => $this->userPayload($user), 'token' => $user->createToken($data['device_name'])->plainTextToken], 201);
     }
     public function login(Request $request)
     {
         $data = $request->validate(['email' => ['required','email'], 'password' => ['required','string'], 'device_name' => ['required','string','max:100']]);
         $user = User::where('email', $data['email'])->first();
         if (!$user || !Hash::check($data['password'], $user->password)) throw ValidationException::withMessages(['email' => ['Invalid email or password.']]);
-        return response()->json(['user' => $user->only('id', 'name', 'email'), 'token' => $user->createToken($data['device_name'])->plainTextToken]);
+        return response()->json(['user' => $this->userPayload($user), 'token' => $user->createToken($data['device_name'])->plainTextToken]);
     }
-    public function me(Request $request) { return $request->user()->only('id', 'name', 'email'); }
+    public function me(Request $request) { return $this->userPayload($request->user()); }
+    public function verifyEmail(Request $request)
+    {
+        $data = $request->validate(['code' => ['required', 'digits:6']]);
+        $user = $request->user();
+        if ($user->hasVerifiedEmail()) return response()->json(['user' => $this->userPayload($user)]);
+        if (!$this->codes->check($user, AuthCodeService::VERIFY, $data['code'])) {
+            throw ValidationException::withMessages(['code' => ['Invalid or expired code.']]);
+        }
+        $user->markEmailAsVerified();
+        return response()->json(['user' => $this->userPayload($user->fresh())]);
+    }
+    public function resendVerification(Request $request)
+    {
+        $user = $request->user();
+        if (!$user->hasVerifiedEmail()) $this->codes->send($user, AuthCodeService::VERIFY);
+        return response()->json(['message' => 'If your email is not verified, a new code has been sent.']);
+    }
+    public function forgotPassword(Request $request)
+    {
+        $data = $request->validate(['email' => ['required', 'email']]);
+        $user = User::where('email', $data['email'])->first();
+        if ($user) $this->codes->send($user, AuthCodeService::RESET);
+        // Same response whether or not the account exists (no account enumeration).
+        return response()->json(['message' => 'If that email has an account, a reset code has been sent.']);
+    }
+    public function resetPassword(Request $request)
+    {
+        $data = $request->validate([
+            'email' => ['required', 'email'],
+            'code' => ['required', 'digits:6'],
+            'password' => ['required', 'confirmed', 'string', 'min:8'],
+        ]);
+        $user = User::where('email', $data['email'])->first();
+        if (!$user || !$this->codes->check($user, AuthCodeService::RESET, $data['code'])) {
+            throw ValidationException::withMessages(['code' => ['Invalid or expired code.']]);
+        }
+        $user->forceFill(['password' => $data['password']])->save();
+        if (!$user->hasVerifiedEmail()) $user->markEmailAsVerified(); // they proved inbox access
+        $user->tokens()->delete(); // sign out every device
+        return response()->json(['message' => 'Password updated. Please sign in.']);
+    }
     public function logout(Request $request) { $request->user()->currentAccessToken()->delete(); return response()->json(['message' => 'Signed out']); }
     public function upload(Request $request)
     {
