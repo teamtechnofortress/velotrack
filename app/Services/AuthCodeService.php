@@ -22,10 +22,10 @@ class AuthCodeService
             ['user_id' => $user->id, 'purpose' => $purpose],
             ['code_hash' => Hash::make($code), 'attempts' => 0, 'expires_at' => now()->addMinutes(self::TTL_MINUTES)]
         );
-        $subject = $purpose === self::VERIFY ? 'Verify your VeloTrack email' : 'Reset your VeloTrack password';
+        $subject = $purpose === self::VERIFY ? 'Verify your Drivio email' : 'Reset your Drivio password';
         $intro = $purpose === self::VERIFY ? 'Your email verification code is' : 'Your password reset code is';
-        Mail::raw("$intro: $code\n\nIt expires in ".self::TTL_MINUTES." minutes. If you did not request this, ignore this email.",
-            fn ($m) => $m->to($user->email)->subject($subject));
+        Mail::raw("$intro: $code\n\nIt expires in ".self::TTL_MINUTES." minutes. If you did not request this, ignore this email.\n\n- The Drivio team",
+            fn ($m) => $m->from(config('mail.from.address'), 'Drivio')->to($user->email)->subject($subject));
     }
 
     /** Returns true and consumes the code when valid. */
